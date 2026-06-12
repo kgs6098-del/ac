@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>에어컨 제어판</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #F0F2F5; font-family: 'Apple SD Gothic Neo', '맑은 고딕', sans-serif; }
+  .header {
+    background: white; padding: 16px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #e0e0e0; position: sticky; top: 0; z-index: 10;
+  }
+  .header-left h1 { font-size: 20px; font-weight: 700; color: #1a1a1a; }
+  .header-left p { font-size: 12px; color: #888; margin-top: 2px; }
+  .conn-badge { font-size: 12px; padding: 6px 14px; border-radius: 20px; background: #FFF3CD; color: #856404; font-weight: 500; }
+  .conn-badge.ok { background: #E1F5EE; color: #0F6E56; }
+  .conn-badge.fail { background: #FAECE7; color: #993C1D; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 16px; }
+  .card { background: white; border-radius: 16px; padding: 16px; border: 2px solid #e8e8e8; transition: border-color 0.2s; }
+  .card.on { border-color: #1D9E75; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .card-name { font-size: 15px; font-weight: 700; color: #1a1a1a; }
+  .card-status { font-size: 12px; color: #888; margin-top: 3px; }
+  .card-status.on { color: #0F6E56; }
+  .power-btns { display: flex; gap: 6px; }
+  .btn-on { padding: 8px 16px; border-radius: 20px; border: none; background: #1D9E75; color: white; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-off { padding: 8px 16px; border-radius: 20px; border: none; background: #E8E8E8; color: #555; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .divider { border: none; border-top: 1px solid #f0f0f0; margin: 12px 0; }
+  .temp-section { text-align: center; }
+  .temp-label { font-size: 11px; color: #888; margin-bottom: 8px; }
+  .temp-row { display: flex; align-items: center; justify-content: center; gap: 16px; }
+  .temp-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: #F0F0F0; color: #333; font-size: 22px; cursor: pointer; }
+  .temp-val { font-size: 32px; font-weight: 700; color: #1a1a1a; min-width: 80px; }
+  .wind-section { margin-top: 12px; }
+  .wind-label { font-size: 11px; color: #888; margin-bottom: 6px; }
+  .wind-row { display: flex; gap: 6px; }
+  .wind-btn { flex: 1; padding: 8px 0; border-radius: 10px; border: 1.5px solid #e0e0e0; background: #F5F5F5; font-size: 13px; font-weight: 500; color: #555; cursor: pointer; }
+  .wind-btn.active { background: #185FA5; border-color: #185FA5; color: white; font-weight: 700; }
+  .disabled { opacity: 0.4; pointer-events: none; }
+  .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 10px 24px; border-radius: 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
+  .toast.show { opacity: 1; }
+  .header-actions { display:flex; gap:8px; align-items:center; }
+  .debug-btn { border:none; background:#185FA5; color:#fff; border-radius:18px; padding:7px 12px; font-size:12px; font-weight:600; cursor:pointer; }
+  .debug-btn.secondary { background:#666; }
+  .debug-log { margin:0 16px 16px; background:#fff; border:1px solid #ddd; border-radius:12px; padding:10px; font-size:12px; color:#333; white-space:pre-wrap; display:none; max-height:220px; overflow:auto; }
+  .debug-log.show { display:block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>에어컨 제어판</h1>
+    <p>대구음악당 · 6대</p>
+  </div>
+  <div class="header-actions">
+    <button class="debug-btn secondary" id="debugBtn">진단</button>
+    <button class="debug-btn" id="refreshBtn">상태 새로고침</button>
+    <div class="conn-badge" id="connBadge">● 연결 중...</div>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="debug-log" id="debugLog"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const ACCESS_ID = "3nkdf79ncp4y5sgh3xx8";
+const ACCESS_SECRET = "85635afde3ca46fcb32d65e562067ecd";
+const BASE_URL = "https://lucky-wind-f4be.kgs6098.workers.dev";
+
+const DEVICES = [
+  { name: "에어컨 1",       id: "eb94855fcff6effe7diiff" },
+  { name: "에어컨 2",       id: "ebe2ca5c6f5f8cbc34aeqk" },
+  { name: "에어컨 3",       id: "eb1d1d36575777134fleyl" },
+  { name: "에어컨 4",       id: "eb797979a2f95dc107zd9d" },
+  { name: "에어컨 5",       id: "ebaab1175e71432b2c8i2h" },
+  { name: "에어컨(귀빈실)", id: "ebff3b0c985f760306htow" },
+];
+
+const WINDS = ["자동", "강", "중", "약"];
+let token = null;
+let tokenExpire = 0;
+const states = DEVICES.map(() => ({ on: false, temp: 24, wind: "자동" }));
+const deviceMeta = {}; // deviceId별 지원 기능 저장
+
+function logDebug(msg, obj) {
+  const el = document.getElementById("debugLog");
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}` + (obj ? "\n" + JSON.stringify(obj, null, 2) : "");
+  el.textContent = line + "\n\n" + el.textContent;
+  console.log(msg, obj || "");
+}
+
+async function sha256Hex(msg) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+async function hmacSha256Hex(key, msg) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2,"0")).join("").toUpperCase();
+}
+
+async function buildHeaders(method, path, body) {
+  const t = Date.now().toString();
+  const contentHash = await sha256Hex(body || "");
+  const strToSign = [method, contentHash, "", path].join("\n");
+  const message = token ? ACCESS_ID + token + t + strToSign : ACCESS_ID + t + strToSign;
+  const sign = await hmacSha256Hex(ACCESS_SECRET, message);
+  const h = new Headers();
+  h.append("client_id", ACCESS_ID);
+  h.append("sign", sign);
+  h.append("t", t);
+  h.append("sign_method", "HMAC-SHA256");
+  h.append("Content-Type", "application/json");
+  if (token) h.append("access_token", token);
+  return h;
+}
+
+async function getToken() {
+  try {
+    const path = "/v1.0/token?grant_type=1";
+    const headers = await buildHeaders("GET", path, "");
+    const res = await fetch(BASE_URL + path, { method: "GET", headers });
+    const data = await res.json();
+    if (data.success) {
+      token = data.result.access_token;
+      tokenExpire = Date.now() + data.result.expire_time * 1000;
+      document.getElementById("connBadge").className = "conn-badge ok";
+      document.getElementById("connBadge").textContent = "● 연결됨";
+      return true;
+    }
+    logDebug("토큰 실패", data);
+  } catch(e) {
+    logDebug("토큰 오류", String(e));
+  }
+  document.getElementById("connBadge").className = "conn-badge fail";
+  document.getElementById("connBadge").textContent = "● 연결 실패";
+  return false;
+}
+
+async function ensureToken() {
+  if (!token || Date.now() >= tokenExpire - 60000) await getToken();
+}
+
+async function tuyaRequest(method, path, bodyObj) {
+  await ensureToken();
+  const body = bodyObj ? JSON.stringify(bodyObj) : "";
+  const headers = await buildHeaders(method, path, body);
+  const res = await fetch(BASE_URL + path, { method, headers, body: method === "GET" ? undefined : body });
+  const data = await res.json();
+  logDebug(`${method} ${path}`, data);
+  return data;
+}
+
+async function sendCommand(deviceId, commands) {
+  try {
+    const path = "/v1.0/devices/" + deviceId + "/commands";
+    const data = await tuyaRequest("POST", path, { commands });
+    return data;
+  } catch(e) {
+    logDebug("명령 오류", String(e));
+    return { success:false, msg:String(e) };
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function parseValues(values) {
+  if (!values) return {};
+  if (typeof values === "object") return values;
+  try { return JSON.parse(values); } catch(e) { return {}; }
+}
+
+function normalizeFunctions(result) {
+  const arr = result?.result?.functions || result?.result || [];
+  if (!Array.isArray(arr)) return [];
+  return arr.map(f => ({ ...f, valuesObj: parseValues(f.values) }));
+}
+
+function getFunction(deviceId, code) {
+  return (deviceMeta[deviceId]?.functions || []).find(f => f.code === code);
+}
+
+async function loadDeviceMeta(deviceId) {
+  // 일부 프로젝트는 /v1.0/devices/{id}/functions, 일부는 /v1.0/iot-03/devices/{id}/functions가 잘 됩니다.
+  let data = await tuyaRequest("GET", "/v1.0/devices/" + deviceId + "/functions");
+  let functions = normalizeFunctions(data);
+  if (!functions.length) {
+    data = await tuyaRequest("GET", "/v1.0/iot-03/devices/" + deviceId + "/functions");
+    functions = normalizeFunctions(data);
+  }
+  deviceMeta[deviceId] = { functions };
+  return functions;
+}
+
+function updateStateFromStatus(i, statusArr) {
+  if (!Array.isArray(statusArr)) return;
+  statusArr.forEach(item => {
+    if (item.code === "switch") states[i].on = !!item.value;
+    if (item.code === "temp_set") {
+      const v = Number(item.value);
+      states[i].temp = v > 50 ? Math.round(v / 10) : v;
+    }
+    if (item.code === "fan_speed_enum") {
+      const reverse = { auto:"자동", high:"강", strong:"강", mid:"중", medium:"중", low:"약" };
+      if (reverse[item.value]) states[i].wind = reverse[item.value];
+    }
+    if (item.code === "windspeed") {
+      const reverseNum = { "1":"약", "2":"중", "3":"강", "4":"자동", "5":"강", "6":"강" };
+      if (reverseNum[String(item.value)]) states[i].wind = reverseNum[String(item.value)];
+    }
+  });
+}
+
+async function refreshOne(i) {
+  const dev = DEVICES[i];
+  try {
+    await loadDeviceMeta(dev.id);
+    const data = await tuyaRequest("GET", "/v1.0/devices/" + dev.id + "/status");
+    updateStateFromStatus(i, data.result);
+  } catch(e) {
+    logDebug(dev.name + " 상태 조회 오류", String(e));
+  }
+}
+
+async function refreshAll() {
+  showToast("상태 확인 중...");
+  for (let i = 0; i < DEVICES.length; i++) await refreshOne(i);
+  renderAll();
+  showToast("상태 새로고침 완료");
+}
+
+function calcTempValue(deviceId, temp) {
+  const f = getFunction(deviceId, "temp_set");
+  const scale = Number(f?.valuesObj?.scale ?? 0);
+  // Tuya 표준 에어컨 temp_set은 scale 0이므로 24 그대로 전송.
+  // 실제 기기 스펙이 scale 1이면 240으로 자동 변환.
+  return Math.round(temp * Math.pow(10, scale));
+}
+
+function chooseFanCommand(deviceId, windKo) {
+  const enumFunc = getFunction(deviceId, "fan_speed_enum");
+  const windFunc = getFunction(deviceId, "windspeed");
+  const enumRange = enumFunc?.valuesObj?.range || [];
+  const windRange = windFunc?.valuesObj?.range || [];
+
+  const enumCandidates = {
+    "자동": ["auto"],
+    "강": ["high", "strong"],
+    "중": ["mid", "medium"],
+    "약": ["low"]
+  };
+  const numericCandidates = {
+    "약": ["1"],
+    "중": ["2"],
+    "강": ["3", "4", "5", "6"],
+    "자동": ["auto", "4", "1"]
+  };
+
+  if (enumFunc) {
+    const candidate = enumCandidates[windKo].find(v => enumRange.length === 0 || enumRange.includes(v));
+    if (candidate) return { code:"fan_speed_enum", value:candidate };
+  }
+  if (windFunc) {
+    const candidate = numericCandidates[windKo].find(v => windRange.length === 0 || windRange.includes(v));
+    if (candidate) return { code:"windspeed", value:candidate };
+  }
+
+  // 기능 조회가 실패했을 때 기본값: 표준 fan_speed_enum 사용
+  const fallback = { "자동":"auto", "강":"high", "중":"mid", "약":"low" };
+  return { code:"fan_speed_enum", value:fallback[windKo] };
+}
+
+function renderAll() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  DEVICES.forEach((dev, i) => {
+    const s = states[i];
+    const card = document.createElement("div");
+    card.className = "card" + (s.on ? " on" : "");
+    card.innerHTML =
+      '<div class="card-header">' +
+        '<div>' +
+          '<div class="card-name">' + dev.name + '</div>' +
+          '<div class="card-status ' + (s.on ? 'on' : '') + '">' + (s.on ? '● 켜짐' : '○ 꺼짐') + '</div>' +
+        '</div>' +
+        '<div class="power-btns">' +
+          '<button class="btn-off" id="off-' + i + '">끄기</button>' +
+          '<button class="btn-on" id="on-' + i + '">켜기</button>' +
+        '</div>' +
+      '</div>' +
+      '<hr class="divider">' +
+      '<div class="' + (s.on ? '' : 'disabled') + '">' +
+        '<div class="temp-section">' +
+          '<div class="temp-label">설정 온도</div>' +
+          '<div class="temp-row">' +
+            '<button class="temp-btn" id="minus-' + i + '">−</button>' +
+            '<div class="temp-val" id="temp-' + i + '">' + s.temp + '°C</div>' +
+            '<button class="temp-btn" id="plus-' + i + '">+</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wind-section">' +
+          '<div class="wind-label">풍량</div>' +
+          '<div class="wind-row" id="wind-row-' + i + '">' +
+            WINDS.map(w => '<button class="wind-btn' + (s.wind===w?' active':'') + '" data-idx="' + i + '" data-wind="' + w + '">' + w + '</button>').join("") +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    grid.appendChild(card);
+
+    document.getElementById("on-" + i).onclick = async () => {
+      states[i].on = true; renderAll();
+      const data = await sendCommand(dev.id, [{ code: "switch", value: true }]);
+      showToast(data.success ? dev.name + " 켜짐" : "명령 실패: " + (data.msg || data.code || "확인 필요"));
+      setTimeout(() => refreshOne(i), 1000);
+    };
+    document.getElementById("off-" + i).onclick = async () => {
+      states[i].on = false; renderAll();
+      const data = await sendCommand(dev.id, [{ code: "switch", value: false }]);
+      showToast(data.success ? dev.name + " 꺼짐" : "명령 실패: " + (data.msg || data.code || "확인 필요"));
+      setTimeout(() => refreshOne(i), 1000);
+    };
+    document.getElementById("minus-" + i).onclick = async () => {
+      states[i].temp = Math.max(16, states[i].temp - 1);
+      document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
+      const value = calcTempValue(dev.id, states[i].temp);
+      const data = await sendCommand(dev.id, [{ code: "temp_set", value }]);
+      showToast(data.success ? `${dev.name} ${states[i].temp}°C 설정` : "온도 명령 실패: " + (data.msg || data.code || "확인 필요"));
+      setTimeout(() => refreshOne(i), 1000);
+    };
+    document.getElementById("plus-" + i).onclick = async () => {
+      states[i].temp = Math.min(30, states[i].temp + 1);
+      document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
+      const value = calcTempValue(dev.id, states[i].temp);
+      const data = await sendCommand(dev.id, [{ code: "temp_set", value }]);
+      showToast(data.success ? `${dev.name} ${states[i].temp}°C 설정` : "온도 명령 실패: " + (data.msg || data.code || "확인 필요"));
+      setTimeout(() => refreshOne(i), 1000);
+    };
+    document.getElementById("wind-row-" + i).querySelectorAll(".wind-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const idx = parseInt(btn.dataset.idx);
+        const w = btn.dataset.wind;
+        states[idx].wind = w;
+        document.getElementById("wind-row-" + idx).querySelectorAll(".wind-btn").forEach(b => {
+          b.classList.toggle("active", b.dataset.wind === w);
+        });
+        const command = chooseFanCommand(dev.id, w);
+        const data = await sendCommand(dev.id, [command]);
+        showToast(data.success ? `${dev.name} 풍량 ${w}` : "풍량 명령 실패: " + (data.msg || data.code || "확인 필요"));
+        setTimeout(() => refreshOne(idx), 1000);
+      };
+    });
+  });
+}
+
+document.getElementById("refreshBtn").onclick = refreshAll;
+document.getElementById("debugBtn").onclick = () => {
+  document.getElementById("debugLog").classList.toggle("show");
+};
+
+(async () => {
+  renderAll();
+  const ok = await getToken();
+  if (ok) await refreshAll();
+})();
+</script>
+</body>
+</html>
+
