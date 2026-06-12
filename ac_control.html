@@ -59,7 +59,7 @@
 <script>
 const ACCESS_ID = "3nkdf79ncp4y5sgh3xx8";
 const ACCESS_SECRET = "85635afde3ca46fcb32d65e562067ecd";
-const BASE_URL = "https://lucky-wind-f4be.kgs6098.workers.dev";
+const BASE_URL = "https://openapi.tuyaus.com";
 
 const DEVICES = [
   { name: "에어컨 1",       id: "eb94855fcff6effe7diiff" },
@@ -193,23 +193,23 @@ function renderAll() {
 
     document.getElementById("on-" + i).onclick = async () => {
       states[i].on = true; renderAll();
-      const ok = await sendCommand(dev.id, [{ code: "switch", value: true }]);
+      const ok = await sendCommand(dev.id, [{ code: "switch_power", value: true }]);
       showToast(ok ? dev.name + " 켜짐" : "명령 실패");
     };
     document.getElementById("off-" + i).onclick = async () => {
       states[i].on = false; renderAll();
-      const ok = await sendCommand(dev.id, [{ code: "switch", value: false }]);
+      const ok = await sendCommand(dev.id, [{ code: "switch_power", value: false }]);
       showToast(ok ? dev.name + " 꺼짐" : "명령 실패");
     };
     document.getElementById("minus-" + i).onclick = async () => {
       states[i].temp = Math.max(16, states[i].temp - 1);
       document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
-      await sendCommand(dev.id, [{ code: "temp_set", value: states[i].temp * 10 }]);
+      await sendCommand(dev.id, [{ code: "temperature", value: states[i].temp }]);
     };
     document.getElementById("plus-" + i).onclick = async () => {
       states[i].temp = Math.min(30, states[i].temp + 1);
       document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
-      await sendCommand(dev.id, [{ code: "temp_set", value: states[i].temp * 10 }]);
+      await sendCommand(dev.id, [{ code: "temperature", value: states[i].temp }]);
     };
     document.getElementById("wind-row-" + i).querySelectorAll(".wind-btn").forEach(btn => {
       btn.onclick = async () => {
@@ -219,7 +219,7 @@ function renderAll() {
         document.getElementById("wind-row-" + idx).querySelectorAll(".wind-btn").forEach(b => {
           b.classList.toggle("active", b.dataset.wind === w);
         });
-        await sendCommand(dev.id, [{ code: "fan_speed_enum", value: WIND_MAP[w] }]);
+        await sendCommand(dev.id, [{ code: "fan", value: w === "자동" ? "auto" : w === "강" ? "high" : w === "중" ? "mid" : "low" }]);
       };
     });
   });
@@ -230,3 +230,4 @@ renderAll();
 </script>
 </body>
 </html>
+
