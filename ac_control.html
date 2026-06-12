@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>에어컨 제어판</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #F0F2F5; font-family: 'Apple SD Gothic Neo', '맑은 고딕', sans-serif; }
+  .header {
+    background: white; padding: 16px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #e0e0e0; position: sticky; top: 0; z-index: 10;
+  }
+  .header-left h1 { font-size: 20px; font-weight: 700; color: #1a1a1a; }
+  .header-left p { font-size: 12px; color: #888; margin-top: 2px; }
+  .conn-badge { font-size: 12px; padding: 6px 14px; border-radius: 20px; background: #FFF3CD; color: #856404; font-weight: 500; }
+  .conn-badge.ok { background: #E1F5EE; color: #0F6E56; }
+  .conn-badge.fail { background: #FAECE7; color: #993C1D; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 16px; }
+  .card { background: white; border-radius: 16px; padding: 16px; border: 2px solid #e8e8e8; transition: border-color 0.2s; }
+  .card.on { border-color: #1D9E75; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .card-name { font-size: 15px; font-weight: 700; color: #1a1a1a; }
+  .card-status { font-size: 12px; color: #888; margin-top: 3px; }
+  .card-status.on { color: #0F6E56; }
+  .power-btns { display: flex; gap: 6px; }
+  .btn-on { padding: 8px 16px; border-radius: 20px; border: none; background: #1D9E75; color: white; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-off { padding: 8px 16px; border-radius: 20px; border: none; background: #E8E8E8; color: #555; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .divider { border: none; border-top: 1px solid #f0f0f0; margin: 12px 0; }
+  .temp-section { text-align: center; }
+  .temp-label { font-size: 11px; color: #888; margin-bottom: 8px; }
+  .temp-row { display: flex; align-items: center; justify-content: center; gap: 16px; }
+  .temp-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: #F0F0F0; color: #333; font-size: 22px; cursor: pointer; }
+  .temp-val { font-size: 32px; font-weight: 700; color: #1a1a1a; min-width: 80px; }
+  .wind-section { margin-top: 12px; }
+  .wind-label { font-size: 11px; color: #888; margin-bottom: 6px; }
+  .wind-row { display: flex; gap: 6px; }
+  .wind-btn { flex: 1; padding: 8px 0; border-radius: 10px; border: 1.5px solid #e0e0e0; background: #F5F5F5; font-size: 13px; font-weight: 500; color: #555; cursor: pointer; }
+  .wind-btn.active { background: #185FA5; border-color: #185FA5; color: white; font-weight: 700; }
+  .disabled { opacity: 0.4; pointer-events: none; }
+  .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 10px 24px; border-radius: 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>에어컨 제어판</h1>
+    <p>대구음악당 · 6대</p>
+  </div>
+  <div class="conn-badge" id="connBadge">● 연결 중...</div>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const ACCESS_ID = "3nkdf79ncp4y5sgh3xx8";
+const ACCESS_SECRET = "85635afde3ca46fcb32d65e562067ecd";
+const BASE_URL = "https://lucky-wind-f4be.kgs6098.workers.dev";
+
+const DEVICES = [
+  { name: "에어컨 1",       id: "eb94855fcff6effe7diiff" },
+  { name: "에어컨 2",       id: "ebe2ca5c6f5f8cbc34aeqk" },
+  { name: "에어컨 3",       id: "eb1d1d36575777134fleyl" },
+  { name: "에어컨 4",       id: "eb797979a2f95dc107zd9d" },
+  { name: "에어컨 5",       id: "ebaab1175e71432b2c8i2h" },
+  { name: "에어컨(귀빈실)", id: "ebff3b0c985f760306htow" },
+];
+
+const WIND_MAP = { "자동": "auto", "강": "high", "중": "mid", "약": "low" };
+const WINDS = ["자동", "강", "중", "약"];
+
+let token = null;
+let tokenExpire = 0;
+const states = DEVICES.map(() => ({ on: false, temp: 24, wind: "자동" }));
+
+async function sha256Hex(msg) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+async function hmacSha256Hex(key, msg) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2,"0")).join("").toUpperCase();
+}
+
+async function buildHeaders(method, path, body) {
+  const t = Date.now().toString();
+  const contentHash = await sha256Hex(body || "");
+  const strToSign = [method, contentHash, "", path].join("\n");
+  const message = token ? ACCESS_ID + token + t + strToSign : ACCESS_ID + t + strToSign;
+  const sign = await hmacSha256Hex(ACCESS_SECRET, message);
+  const h = new Headers();
+  h.append("client_id", ACCESS_ID);
+  h.append("sign", sign);
+  h.append("t", t);
+  h.append("sign_method", "HMAC-SHA256");
+  h.append("Content-Type", "application/json");
+  if (token) h.append("access_token", token);
+  return h;
+}
+
+async function getToken() {
+  try {
+    const path = "/v1.0/token?grant_type=1";
+    const headers = await buildHeaders("GET", path, "");
+    const res = await fetch(BASE_URL + path, { method: "GET", headers });
+    const data = await res.json();
+    if (data.success) {
+      token = data.result.access_token;
+      tokenExpire = Date.now() + data.result.expire_time * 1000;
+      document.getElementById("connBadge").className = "conn-badge ok";
+      document.getElementById("connBadge").textContent = "● 연결됨";
+      return true;
+    } else {
+      console.error("토큰 실패:", data);
+    }
+  } catch(e) {
+    console.error("토큰 오류:", e);
+  }
+  document.getElementById("connBadge").className = "conn-badge fail";
+  document.getElementById("connBadge").textContent = "● 연결 실패";
+  return false;
+}
+
+async function ensureToken() {
+  if (!token || Date.now() >= tokenExpire - 60000) await getToken();
+}
+
+async function sendCommand(deviceId, commands) {
+  try {
+    await ensureToken();
+    const path = "/v1.0/devices/" + deviceId + "/commands";
+    const body = JSON.stringify({ commands });
+    const headers = await buildHeaders("POST", path, body);
+    const res = await fetch(BASE_URL + path, { method: "POST", headers, body });
+    const data = await res.json();
+    return data.success;
+  } catch(e) {
+    console.error("명령 오류:", e);
+    return false;
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2000);
+}
+
+function renderAll() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  DEVICES.forEach((dev, i) => {
+    const s = states[i];
+    const card = document.createElement("div");
+    card.className = "card" + (s.on ? " on" : "");
+    card.innerHTML =
+      '<div class="card-header">' +
+        '<div>' +
+          '<div class="card-name">' + dev.name + '</div>' +
+          '<div class="card-status ' + (s.on ? 'on' : '') + '">' + (s.on ? '● 켜짐' : '○ 꺼짐') + '</div>' +
+        '</div>' +
+        '<div class="power-btns">' +
+          '<button class="btn-off" id="off-' + i + '">끄기</button>' +
+          '<button class="btn-on" id="on-' + i + '">켜기</button>' +
+        '</div>' +
+      '</div>' +
+      '<hr class="divider">' +
+      '<div class="' + (s.on ? '' : 'disabled') + '">' +
+        '<div class="temp-section">' +
+          '<div class="temp-label">설정 온도</div>' +
+          '<div class="temp-row">' +
+            '<button class="temp-btn" id="minus-' + i + '">−</button>' +
+            '<div class="temp-val" id="temp-' + i + '">' + s.temp + '°C</div>' +
+            '<button class="temp-btn" id="plus-' + i + '">+</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wind-section">' +
+          '<div class="wind-label">풍량</div>' +
+          '<div class="wind-row" id="wind-row-' + i + '">' +
+            WINDS.map(w => '<button class="wind-btn' + (s.wind===w?' active':'') + '" data-idx="' + i + '" data-wind="' + w + '">' + w + '</button>').join("") +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    grid.appendChild(card);
+
+    document.getElementById("on-" + i).onclick = async () => {
+      states[i].on = true; renderAll();
+      const ok = await sendCommand(dev.id, [{ code: "switch", value: true }]);
+      showToast(ok ? dev.name + " 켜짐" : "명령 실패");
+    };
+    document.getElementById("off-" + i).onclick = async () => {
+      states[i].on = false; renderAll();
+      const ok = await sendCommand(dev.id, [{ code: "switch", value: false }]);
+      showToast(ok ? dev.name + " 꺼짐" : "명령 실패");
+    };
+    document.getElementById("minus-" + i).onclick = async () => {
+      states[i].temp = Math.max(16, states[i].temp - 1);
+      document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
+      await sendCommand(dev.id, [{ code: "temp_set", value: states[i].temp * 10 }]);
+    };
+    document.getElementById("plus-" + i).onclick = async () => {
+      states[i].temp = Math.min(30, states[i].temp + 1);
+      document.getElementById("temp-" + i).textContent = states[i].temp + "°C";
+      await sendCommand(dev.id, [{ code: "temp_set", value: states[i].temp * 10 }]);
+    };
+    document.getElementById("wind-row-" + i).querySelectorAll(".wind-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const idx = parseInt(btn.dataset.idx);
+        const w = btn.dataset.wind;
+        states[idx].wind = w;
+        document.getElementById("wind-row-" + idx).querySelectorAll(".wind-btn").forEach(b => {
+          b.classList.toggle("active", b.dataset.wind === w);
+        });
+        await sendCommand(dev.id, [{ code: "fan_speed_enum", value: WIND_MAP[w] }]);
+      };
+    });
+  });
+}
+
+getToken();
+renderAll();
+</script>
+</body>
+</html>
+
