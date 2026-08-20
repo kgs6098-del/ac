@@ -1,0 +1,41 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Unzip Android project
+        run: |
+          rm -rf build-src
+          mkdir build-src
+          unzip -q app.zip -d build-src
+
+      - name: Build APK
+        working-directory: build-src/YouTubeTranscriptAndroid
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Transcript-APK
+          path: build-src/YouTubeTranscriptAndroid/app/build/outputs/apk/debug/app-debug.apk
